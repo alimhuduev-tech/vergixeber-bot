@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { Telegraf, Markup } from 'telegraf';
 import ExcelJS from 'exceljs';
+import http from 'http';
+const port = process.env.PORT || 3000;
+http.createServer((_, res) => res.end('OK')).listen(port);
 
 // Админ, кому приходят анкеты
 const ADMIN_ID = 151497334;
@@ -47,12 +50,13 @@ function summaryText(d) {
   return parts.join('\n');
 }
 
-// === Генерация Excel-файла в памяти ===
+// === Генерация Excel-файла в памяти (исправлено) ===
 async function buildExcelBuffer(d) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Anket');
 
-  ws.columns = [
+  // 1) Готовим массив колонок отдельно
+  const columns = [
     { header: 'Tarix', key: 'date', width: 24 },
     { header: 'Şirkət', key: 'company', width: 28 },
     { header: 'Əlaqə', key: 'phone', width: 20 },
@@ -60,16 +64,19 @@ async function buildExcelBuffer(d) {
   ];
 
   if (d.taxForm === 'Sadələşdirilmiş') {
-    ws.columns.push({ header: 'Dövriyyə', key: 'turnover', width: 20 });
-    ws.columns.push({ header: 'İşçi sayı', key: 'employees', width: 16 });
+    columns.push({ header: 'Dövriyyə', key: 'turnover', width: 20 });
+    columns.push({ header: 'İşçi sayı', key: 'employees', width: 16 });
   } else if (d.taxForm === 'ƏDV') {
-    ws.columns.push({ header: 'Dövriyyə', key: 'turnover', width: 20 });
-    ws.columns.push({ header: 'İşçi sayı', key: 'employees', width: 16 });
-    ws.columns.push({ header: 'Sənəd dövriyyəsi', key: 'docs', width: 16 });
-    ws.columns.push({ header: 'Əvvəl uçot', key: 'prevAccounting', width: 14 });
-    ws.columns.push({ header: 'Uçot proqramı', key: 'accountingProgram', width: 16 });
-    ws.columns.push({ header: 'Mal çeşidi', key: 'skuCount', width: 14 });
+    columns.push({ header: 'Dövriyyə', key: 'turnover', width: 20 });
+    columns.push({ header: 'İşçi sayı', key: 'employees', width: 16 });
+    columns.push({ header: 'Sənəd dövriyyəsi', key: 'docs', width: 16 });
+    columns.push({ header: 'Əvvəl uçot', key: 'prevAccounting', width: 14 });
+    columns.push({ header: 'Uçot proqramı', key: 'accountingProgram', width: 16 });
+    columns.push({ header: 'Mal çeşidi', key: 'skuCount', width: 14 });
   }
+
+  // 2) Одним присваиванием
+  ws.columns = columns;
 
   const now = new Date().toLocaleString('az-AZ', { timeZone: 'Asia/Baku' });
 
@@ -92,12 +99,18 @@ async function buildExcelBuffer(d) {
   return Buffer.from(buf);
 }
 
-// Отправка админу: текст + Excel
+// Отправка админу: текст + Excel (с защитой от падения)
 async function sendToAdmin(data) {
   await bot.telegram.sendMessage(ADMIN_ID, summaryText(data));
-  const excel = await buildExcelBuffer(data);
-  const fname = `anket_${Date.now()}.xlsx`;
-  await bot.telegram.sendDocument(ADMIN_ID, { source: excel, filename: fname });
+  try {
+    const excel = await buildExcelBuffer(data);
+    const fname = `anket_${Date.now()}.xlsx`;
+    await bot.telegram.sendDocument(ADMIN_ID, { source: excel, filename: fname });
+  } catch (e) {
+    
+    // Если Excel внезапно упадёт — бот не умрёт
+    await bot.telegram.sendMessage(ADMIN_ID, `⚠️ Excel faylı yaradılmadı: ${e?.message || e}`);
+  }
 }
 
 // /start
