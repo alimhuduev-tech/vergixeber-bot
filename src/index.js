@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { Telegraf, Markup } from 'telegraf';
+import ExcelJS from 'exceljs';
 
 // Админ, кому приходят анкеты
 const ADMIN_ID = 151497334;
@@ -21,7 +22,7 @@ function isPhone(text) {
   return /^[\d\s()+-]{5,}$/.test(text.trim());
 }
 
-// Финальное сообщение админу
+// Финальное сообщение админу (текст)
 function summaryText(d) {
   const parts = [];
   parts.push(`Yeni müraciət:`);
@@ -44,6 +45,59 @@ function summaryText(d) {
   }
 
   return parts.join('\n');
+}
+
+// === Генерация Excel-файла в памяти ===
+async function buildExcelBuffer(d) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Anket');
+
+  ws.columns = [
+    { header: 'Tarix', key: 'date', width: 24 },
+    { header: 'Şirkət', key: 'company', width: 28 },
+    { header: 'Əlaqə', key: 'phone', width: 20 },
+    { header: 'Vergi forması', key: 'taxForm', width: 18 },
+  ];
+
+  if (d.taxForm === 'Sadələşdirilmiş') {
+    ws.columns.push({ header: 'Dövriyyə', key: 'turnover', width: 20 });
+    ws.columns.push({ header: 'İşçi sayı', key: 'employees', width: 16 });
+  } else if (d.taxForm === 'ƏDV') {
+    ws.columns.push({ header: 'Dövriyyə', key: 'turnover', width: 20 });
+    ws.columns.push({ header: 'İşçi sayı', key: 'employees', width: 16 });
+    ws.columns.push({ header: 'Sənəd dövriyyəsi', key: 'docs', width: 16 });
+    ws.columns.push({ header: 'Əvvəl uçot', key: 'prevAccounting', width: 14 });
+    ws.columns.push({ header: 'Uçot proqramı', key: 'accountingProgram', width: 16 });
+    ws.columns.push({ header: 'Mal çeşidi', key: 'skuCount', width: 14 });
+  }
+
+  const now = new Date().toLocaleString('az-AZ', { timeZone: 'Asia/Baku' });
+
+  ws.addRow({
+    date: now,
+    company: d.company || '',
+    phone: d.phone || '',
+    taxForm: d.taxForm || '',
+    turnover: d.turnover || '',
+    employees: d.employees || '',
+    docs: d.docs || '',
+    prevAccounting: d.prevAccounting || '',
+    accountingProgram: d.accountingProgram || '',
+    skuCount: d.skuCount || '',
+  });
+
+  ws.getRow(1).font = { bold: true };
+
+  const buf = await wb.xlsx.writeBuffer();
+  return Buffer.from(buf);
+}
+
+// Отправка админу: текст + Excel
+async function sendToAdmin(data) {
+  await bot.telegram.sendMessage(ADMIN_ID, summaryText(data));
+  const excel = await buildExcelBuffer(data);
+  const fname = `anket_${Date.now()}.xlsx`;
+  await bot.telegram.sendDocument(ADMIN_ID, { source: excel, filename: fname });
 }
 
 // /start
@@ -130,7 +184,7 @@ for (const [code, label] of [
     s.data.employees = label;
     await ctx.answerCbQuery('Tamam');
     await ctx.editMessageText('Təşəkkürlər! Məlumatlar qəbul edildi ✅');
-    await bot.telegram.sendMessage(ADMIN_ID, summaryText(s.data));
+    await sendToAdmin(s.data);
     resetSession(uid);
   });
 }
@@ -259,7 +313,7 @@ for (const [code, label] of [
 async function finalizeEDV(ctx, uid, s) {
   await ctx.answerCbQuery('Tamam');
   await ctx.editMessageText('Təşəkkürlər! Məlumatlar qəbul edildi ✅');
-  await bot.telegram.sendMessage(ADMIN_ID, summaryText(s.data));
+  await sendToAdmin(s.data);
   resetSession(uid);
 }
 
@@ -283,7 +337,7 @@ bot.action('tax_sv', async (ctx) => {
   s.data.taxForm = 'S.V';
   await ctx.answerCbQuery();
   await ctx.editMessageText('S.V bölməsi tezliklə əlavə olunacaq. Təşəkkürlər! ✅');
-  await bot.telegram.sendMessage(ADMIN_ID, summaryText(s.data));
+  await sendToAdmin(s.data);
   resetSession(uid);
 });
 
