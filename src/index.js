@@ -13,7 +13,8 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // simple in-memory session
 const sessions = new Map();
-const getS = (id) => (sessions.has(id) ? sessions.get(id) : (sessions.set(id, { step: 'start', data: {} }), sessions.get(id)));
+const getS = (id) =>
+  sessions.has(id) ? sessions.get(id) : (sessions.set(id, { step: 'start', data: {} }), sessions.get(id));
 const resetS = (id) => sessions.set(id, { step: 'start', data: {} });
 
 const isPhone = (t) => /^[\d\s()+-]{7,}$/.test(String(t).trim());
@@ -49,10 +50,6 @@ function summaryText(d) {
     p.push('(S.V / M.V bölməsi tezliklə əlavə olunacaq)');
   }
 
-  if (typeof d.voen === 'boolean') p.push(`VOEN: ${d.voen ? 'Bəli' : 'Xeyr'}`);
-  if (d.voenNumber) p.push(`VOEN nömrəsi: ${d.voenNumber}`);
-  if (d.servicePackage) p.push(`Xidmət paketi: ${d.servicePackage}`);
-
   return p.join('\n');
 }
 
@@ -74,10 +71,7 @@ async function buildExcelBuffer(d) {
     { header: 'Mal çeşidi', key: 'skuCount', width: 14 },
     { header: 'Daxili mühasibat', key: 'internalAccounting', width: 16 },
     { header: 'Daha öncə uçot', key: 'prevAccounting', width: 16 },
-    { header: 'Uçot proqramı', key: 'accountingProgram', width: 16 },
-    { header: 'VOEN', key: 'voen', width: 10 },
-    { header: 'VOEN nömrəsi', key: 'voenNumber', width: 20 },
-    { header: 'Xidmət paketi', key: 'servicePackage', width: 16 },
+    { header: 'Uçot proqramı', key: 'accountingProgram', width: 16 }
   ];
   ws.columns = columns;
 
@@ -96,10 +90,7 @@ async function buildExcelBuffer(d) {
     skuCount: d.skuCount || '',
     internalAccounting: typeof d.internalAccounting === 'boolean' ? (d.internalAccounting ? 'Bəli' : 'Xeyr') : '',
     prevAccounting: typeof d.prevAccounting === 'boolean' ? (d.prevAccounting ? 'Bəli' : 'Xeyr') : '',
-    accountingProgram: d.accountingProgram || '',
-    voen: typeof d.voen === 'boolean' ? (d.voen ? 'Bəli' : 'Xeyr') : '',
-    voenNumber: d.voenNumber || '',
-    servicePackage: d.servicePackage || '',
+    accountingProgram: d.accountingProgram || ''
   });
 
   ws.getRow(1).font = { bold: true };
@@ -135,6 +126,7 @@ bot.start(async (ctx) => {
   await ctx.reply('Salam! Qısa bir anket aparacağam. 😊\nZəhmət olmasa şirkət adını yazın:');
 });
 
+// text handler
 bot.on('text', async (ctx) => {
   const uid = ctx.from.id;
   const s = getS(uid);
@@ -155,9 +147,8 @@ bot.on('text', async (ctx) => {
     );
   }
 
-  // 4–5) Əlaqə məlumatı (mətnlə)
+  // Əlaqə məlumatı (mətn)
   if (s.step === 'ask_contact_value') {
-    // validation by selected method
     const m = s.data.contactMethod;
     if (m === 'Zəng' || m === 'WhatsApp/Telegram') {
       if (!isPhone(text)) return ctx.reply('Nömrə düzgün deyil. Zəhmət olmasa belə yazın: +994xxxxxxxxx');
@@ -187,21 +178,6 @@ bot.on('text', async (ctx) => {
       Markup.inlineKeyboard([
         [Markup.button.callback('Bəli', 'edv_internal_yes')],
         [Markup.button.callback('Xeyr', 'edv_internal_no')],
-      ])
-    );
-  }
-
-  // VOEN nömrəsi (mətin)
-  if (s.step === 'ask_voen_number') {
-    s.data.voenNumber = text;
-    s.step = 'ask_service_package';
-    return ctx.reply(
-      'Xidmət paketini seçin:',
-      Markup.inlineKeyboard([
-        [Markup.button.callback('Uçot', 'svc_accounting')],
-        [Markup.button.callback('Maaş və kadr', 'svc_payroll')],
-        [Markup.button.callback('Vergi məsləhəti', 'svc_tax')],
-        [Markup.button.callback('Tam paket', 'svc_full')],
       ])
     );
   }
@@ -282,15 +258,8 @@ for (const [code, label] of [
   bot.action(code, async (ctx) => {
     const s = getS(ctx.from.id);
     s.data.employees = label;
-    s.step = 'ask_voen';
-    await ctx.answerCbQuery();
-    await ctx.editMessageText(
-      'VOEN var?',
-      Markup.inlineKeyboard([
-        [Markup.button.callback('Bəli', 'voen_yes')],
-        [Markup.button.callback('Xeyr', 'voen_no')],
-      ])
-    );
+    await ctx.answerCbQuery('Tamam');
+    await finalize(ctx);
   });
 }
 
@@ -448,7 +417,7 @@ bot.action('edv_internal_no', async (ctx) => {
   );
 });
 
-// previous accounting & program
+// previous accounting & program (finalize after this block)
 bot.action('edv_prev_yes', async (ctx) => {
   const s = getS(ctx.from.id);
   s.data.prevAccounting = true;
@@ -467,15 +436,8 @@ bot.action('edv_prev_yes', async (ctx) => {
 bot.action('edv_prev_no', async (ctx) => {
   const s = getS(ctx.from.id);
   s.data.prevAccounting = false;
-  s.step = 'ask_voen';
-  await ctx.answerCbQuery();
-  await ctx.editMessageText(
-    'VOEN var?',
-    Markup.inlineKeyboard([
-      [Markup.button.callback('Bəli', 'voen_yes')],
-      [Markup.button.callback('Xeyr', 'voen_no')],
-    ])
-  );
+  await ctx.answerCbQuery('Tamam');
+  await finalize(ctx);
 });
 for (const [code, label] of [
   ['edv_p_1c', '1C'],
@@ -486,15 +448,8 @@ for (const [code, label] of [
   bot.action(code, async (ctx) => {
     const s = getS(ctx.from.id);
     s.data.accountingProgram = label;
-    s.step = 'ask_voen';
-    await ctx.answerCbQuery();
-    await ctx.editMessageText(
-      'VOEN var?',
-      Markup.inlineKeyboard([
-        [Markup.button.callback('Bəli', 'voen_yes')],
-        [Markup.button.callback('Xeyr', 'voen_no')],
-      ])
-    );
+    await ctx.answerCbQuery('Tamam');
+    await finalize(ctx);
   });
 }
 
@@ -502,57 +457,10 @@ for (const [code, label] of [
 bot.action('tax_sv', async (ctx) => {
   const s = getS(ctx.from.id);
   s.data.taxForm = 'S.V';
-  s.step = 'sv_followup';
   await ctx.answerCbQuery();
-  await ctx.editMessageText('S.V / M.V bölməsi tezliklə əlavə olunacaq. Davam edək.');
-  // переход на VOEN сразу
-  s.step = 'ask_voen';
-  await ctx.reply(
-    'VOEN var?',
-    Markup.inlineKeyboard([
-      [Markup.button.callback('Bəli', 'voen_yes')],
-      [Markup.button.callback('Xeyr', 'voen_no')],
-    ])
-  );
+  await ctx.editMessageText('S.V / M.V bölməsi tezliklə əlavə olunacaq. Təşəkkürlər!');
+  await finalize(ctx);
 });
-
-// ===== Common: VOEN + Service Package =====
-bot.action('voen_yes', async (ctx) => {
-  const s = getS(ctx.from.id);
-  s.data.voen = true;
-  s.step = 'ask_voen_number';
-  await ctx.answerCbQuery();
-  await ctx.editMessageText('VOEN nömrəsini yazın:');
-});
-bot.action('voen_no', async (ctx) => {
-  const s = getS(ctx.from.id);
-  s.data.voen = false;
-  s.step = 'ask_service_package';
-  await ctx.answerCbQuery();
-  await ctx.editMessageText(
-    'Xidmət paketini seçin:',
-    Markup.inlineKeyboard([
-      [Markup.button.callback('Uçot', 'svc_accounting')],
-      [Markup.button.callback('Maaş və kadr', 'svc_payroll')],
-      [Markup.button.callback('Vergi məsləhəti', 'svc_tax')],
-      [Markup.button.callback('Tam paket', 'svc_full')],
-    ])
-  );
-});
-
-for (const [code, label] of [
-  ['svc_accounting', 'Uçot'],
-  ['svc_payroll', 'Maaş və kadr'],
-  ['svc_tax', 'Vergi məsləhəti'],
-  ['svc_full', 'Tam paket'],
-]) {
-  bot.action(code, async (ctx) => {
-    const s = getS(ctx.from.id);
-    s.data.servicePackage = label;
-    await ctx.answerCbQuery('Tamam');
-    await finalize(ctx);
-  });
-}
 
 // ===== graceful stop & launch =====
 process.once('SIGINT', () => bot.stop('SIGINT'));
