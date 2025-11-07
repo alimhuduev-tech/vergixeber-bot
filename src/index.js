@@ -32,6 +32,14 @@ function summaryText(d) {
   if (d.taxForm === 'Sadələşdirilmiş') {
     p.push(`Dövriyyə: ${d.turnover || '-'}`);
     p.push(`İşçi sayı: ${d.employees || '-'}`);
+    if (d.dailyOps) p.push(`Günlük əməliyyat sayı: ${d.dailyOps}`);
+    if (typeof d.internalAccounting === 'boolean') p.push(`Daxili mühasibat: ${d.internalAccounting ? 'Bəli' : 'Xeyr'}`);
+    if (d.activity) p.push(`Fəaliyyət sahəsi: ${d.activity}`);
+    if (d.serviceTypesCount) p.push(`Xidmət növünün sayı: ${d.serviceTypesCount}`);
+    if (d.skuCount) p.push(`Mal çeşidi: ${d.skuCount}`);
+    if (typeof d.foreignImport === 'boolean') p.push(`Xarici idxal əməliyyatları: ${d.foreignImport ? 'Bəli' : 'Xeyr'}`);
+    if (typeof d.prevAccounting === 'boolean') p.push(`Daha öncə uçot: ${d.prevAccounting ? 'Bəli' : 'Xeyr'}`);
+    if (d.accountingProgram) p.push(`Uçot proqramı: ${d.accountingProgram}`);
   }
 
   if (d.taxForm === 'ƏDV') {
@@ -65,13 +73,19 @@ async function buildExcelBuffer(d) {
     { header: 'Vergi forması', key: 'taxForm', width: 16 },
     { header: 'Dövriyyə', key: 'turnover', width: 20 },
     { header: 'İşçi sayı', key: 'employees', width: 14 },
+
+    // ƏDV üçün istifadə olunan:
     { header: 'Əməliyyat sayı', key: 'opsCount', width: 16 },
     { header: 'Fəaliyyət sahəsi', key: 'activity', width: 18 },
     { header: 'Xidmət növünün sayı', key: 'serviceTypesCount', width: 18 },
     { header: 'Mal çeşidi', key: 'skuCount', width: 14 },
     { header: 'Daxili mühasibat', key: 'internalAccounting', width: 16 },
     { header: 'Daha öncə uçot', key: 'prevAccounting', width: 16 },
-    { header: 'Uçot proqramı', key: 'accountingProgram', width: 16 }
+    { header: 'Uçot proqramı', key: 'accountingProgram', width: 16 },
+
+    // Sadələşdirilmiş üçün yeni:
+    { header: 'Günlük əməliyyat sayı', key: 'dailyOps', width: 20 },
+    { header: 'Xarici idxal əməliyyatları', key: 'foreignImport', width: 22 },
   ];
   ws.columns = columns;
 
@@ -84,13 +98,17 @@ async function buildExcelBuffer(d) {
     taxForm: d.taxForm || '',
     turnover: d.turnover || '',
     employees: d.employees || '',
+
     opsCount: d.opsCount || '',
     activity: d.activity || '',
     serviceTypesCount: d.serviceTypesCount || '',
     skuCount: d.skuCount || '',
     internalAccounting: typeof d.internalAccounting === 'boolean' ? (d.internalAccounting ? 'Bəli' : 'Xeyr') : '',
     prevAccounting: typeof d.prevAccounting === 'boolean' ? (d.prevAccounting ? 'Bəli' : 'Xeyr') : '',
-    accountingProgram: d.accountingProgram || ''
+    accountingProgram: d.accountingProgram || '',
+
+    dailyOps: d.dailyOps || '',
+    foreignImport: typeof d.foreignImport === 'boolean' ? (d.foreignImport ? 'Bəli' : 'Xeyr') : '',
   });
 
   ws.getRow(1).font = { bold: true };
@@ -213,7 +231,7 @@ bot.action('contact_other', async (ctx) => {
   await ctx.editMessageText('Əlaqə məlumatını yazın:');
 });
 
-// ===== Sadələşdirilmiş =====
+// ===== Sadələşdirilmiş (yenilənmiş tam axın) =====
 bot.action('tax_sade', async (ctx) => {
   const s = getS(ctx.from.id);
   s.data.taxForm = 'Sadələşdirilmiş';
@@ -258,12 +276,190 @@ for (const [code, label] of [
   bot.action(code, async (ctx) => {
     const s = getS(ctx.from.id);
     s.data.employees = label;
+    s.step = 'sade_daily_ops';
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      'Günlük əməliyyat sayı:',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('0–20', 'sade_op_20')],
+        [Markup.button.callback('20–50', 'sade_op_50')],
+        [Markup.button.callback('50+', 'sade_op_50plus')],
+      ])
+    );
+  });
+}
+
+for (const [code, label] of [
+  ['sade_op_20', '0–20'],
+  ['sade_op_50', '20–50'],
+  ['sade_op_50plus', '50+'],
+]) {
+  bot.action(code, async (ctx) => {
+    const s = getS(ctx.from.id);
+    s.data.dailyOps = label;
+    s.step = 'sade_internal';
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      'Daxili mühasibat xidmətləri var?',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('Bəli', 'sade_internal_yes')],
+        [Markup.button.callback('Xeyr', 'sade_internal_no')],
+      ])
+    );
+  });
+}
+
+for (const [code, val] of [
+  ['sade_internal_yes', true],
+  ['sade_internal_no', false],
+]) {
+  bot.action(code, async (ctx) => {
+    const s = getS(ctx.from.id);
+    s.data.internalAccounting = val;
+    s.step = 'sade_activity';
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      'Şirkət fəaliyyət sahəsi:',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('Xidmət', 'sade_act_service')],
+        [Markup.button.callback('İstehsal', 'sade_act_production')],
+        [Markup.button.callback('Məhsul satışı', 'sade_act_sales')],
+      ])
+    );
+  });
+}
+
+// Xidmət → Xidmət növünün sayı → Daha öncə uçot
+bot.action('sade_act_service', async (ctx) => {
+  const s = getS(ctx.from.id);
+  s.data.activity = 'Xidmət';
+  s.step = 'sade_service_types';
+  await ctx.answerCbQuery();
+  await ctx.editMessageText(
+    'Xidmət növünün sayını seçin:',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('0–5', 'sade_svc_5')],
+      [Markup.button.callback('6–10', 'sade_svc_10')],
+      [Markup.button.callback('10+', 'sade_svc_10plus')],
+    ])
+  );
+});
+
+for (const [code, label] of [
+  ['sade_svc_5', '0–5'],
+  ['sade_svc_10', '6–10'],
+  ['sade_svc_10plus', '10+'],
+]) {
+  bot.action(code, async (ctx) => {
+    const s = getS(ctx.from.id);
+    s.data.serviceTypesCount = label;
+    s.step = 'sade_prev'; // Xidmət üçün — импорт не спрашиваем
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      'Daha öncə uçot var idi?',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('Bəli', 'sade_prev_yes')],
+        [Markup.button.callback('Xeyr', 'sade_prev_no')],
+      ])
+    );
+  });
+}
+
+// İstehsal / Məhsul satışı → Mal çeşidi → Xarici idxal → Daha öncə uçot
+for (const [code, label] of [
+  ['sade_act_production', 'İstehsal'],
+  ['sade_act_sales', 'Məhsul satışı'],
+]) {
+  bot.action(code, async (ctx) => {
+    const s = getS(ctx.from.id);
+    s.data.activity = label;
+    s.step = 'sade_sku';
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      'Mal çeşidi:',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('0–100', 'sade_sku_100')],
+        [Markup.button.callback('100–500', 'sade_sku_500')],
+        [Markup.button.callback('500+', 'sade_sku_500plus')],
+      ])
+    );
+  });
+}
+for (const [code, label] of [
+  ['sade_sku_100', '0–100'],
+  ['sade_sku_500', '100–500'],
+  ['sade_sku_500plus', '500+'],
+]) {
+  bot.action(code, async (ctx) => {
+    const s = getS(ctx.from.id);
+    s.data.skuCount = label;
+    s.step = 'sade_import';
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      'Xarici idxal əməliyyatları var?',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('Bəli', 'sade_imp_yes')],
+        [Markup.button.callback('Xeyr', 'sade_imp_no')],
+      ])
+    );
+  });
+}
+for (const [code, val] of [
+  ['sade_imp_yes', true],
+  ['sade_imp_no', false],
+]) {
+  bot.action(code, async (ctx) => {
+    const s = getS(ctx.from.id);
+    s.data.foreignImport = val;
+    s.step = 'sade_prev';
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      'Daha öncə uçot var idi?',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('Bəli', 'sade_prev_yes')],
+        [Markup.button.callback('Xeyr', 'sade_prev_no')],
+      ])
+    );
+  });
+}
+
+// Daha öncə uçot → (Bəli) Uçot proqramı → финал
+bot.action('sade_prev_yes', async (ctx) => {
+  const s = getS(ctx.from.id);
+  s.data.prevAccounting = true;
+  s.step = 'sade_program';
+  await ctx.answerCbQuery();
+  await ctx.editMessageText(
+    'Uçot proqramını seçin:',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('1C', 'sade_p_1c')],
+      [Markup.button.callback('Günəş', 'sade_p_gunes')],
+      [Markup.button.callback('Excel', 'sade_p_excel')],
+      [Markup.button.callback('Digər', 'sade_p_other')],
+    ])
+  );
+});
+bot.action('sade_prev_no', async (ctx) => {
+  const s = getS(ctx.from.id);
+  s.data.prevAccounting = false;
+  await ctx.answerCbQuery('Tamam');
+  await finalize(ctx);
+});
+for (const [code, label] of [
+  ['sade_p_1c', '1C'],
+  ['sade_p_gunes', 'Günəş'],
+  ['sade_p_excel', 'Excel'],
+  ['sade_p_other', 'Digər'],
+]) {
+  bot.action(code, async (ctx) => {
+    const s = getS(ctx.from.id);
+    s.data.accountingProgram = label;
     await ctx.answerCbQuery('Tamam');
     await finalize(ctx);
   });
 }
 
-// ===== ƏDV =====
+// ===== ƏDV (как было) =====
 bot.action('tax_edv', async (ctx) => {
   const s = getS(ctx.from.id);
   s.data.taxForm = 'ƏDV';
@@ -278,7 +474,6 @@ bot.action('tax_edv', async (ctx) => {
     ])
   );
 });
-
 for (const [code, label] of [
   ['edv_t_1m', '≤ 1 000 000 ₼'],
   ['edv_t_10m', '1 000 000 – 10 000 000 ₼'],
@@ -299,7 +494,6 @@ for (const [code, label] of [
     );
   });
 }
-
 for (const [code, label] of [
   ['edv_e_30', '0–30'],
   ['edv_e_100', '30–100'],
@@ -320,7 +514,6 @@ for (const [code, label] of [
     );
   });
 }
-
 for (const [code, label] of [
   ['edv_op_20', '0–20'],
   ['edv_op_50', '20–50'],
@@ -341,8 +534,6 @@ for (const [code, label] of [
     );
   });
 }
-
-// activity branching
 bot.action('act_service', async (ctx) => {
   const s = getS(ctx.from.id);
   s.data.activity = 'Xidmət';
@@ -388,8 +579,6 @@ for (const [code, label] of [
     );
   });
 }
-
-// internal accounting
 bot.action('edv_internal_yes', async (ctx) => {
   const s = getS(ctx.from.id);
   s.data.internalAccounting = true;
@@ -416,8 +605,6 @@ bot.action('edv_internal_no', async (ctx) => {
     ])
   );
 });
-
-// previous accounting & program (finalize after this block)
 bot.action('edv_prev_yes', async (ctx) => {
   const s = getS(ctx.from.id);
   s.data.prevAccounting = true;
